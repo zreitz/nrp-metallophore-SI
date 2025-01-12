@@ -1,0 +1,69 @@
+---
+title: "R Notebook"
+output: html_document
+---
+
+Start with only complete representative genomes
+```{r}
+assembly_summary <- read.csv("../2_refseq_reps_results/assembly_summary.txt", sep = "\t", header = F)
+
+assembly_summary <- assembly_summary[assembly_summary$V12 == "Complete Genome", ]
+
+# Sort by accession
+assembly_summary <- assembly_summary[order(assembly_summary$V1),]
+```
+
+Split clusters for each strain
+```{r}
+cluster_info <- read.table("../2_refseq_reps_results/scores_0625.tsv",
+                              sep = "\t", header=T)
+
+assembly_clusters <- lapply(assembly_summary$V1, function(x) cluster_info[cluster_info$Assembly == x,])
+
+names(assembly_clusters) <- assembly_summary$V1
+```
+
+```{r}
+ass_nrp_sids <- lapply(assembly_clusters, function(x) {
+  x[x$NRP.metallophore == T,]
+})
+
+nrp_sid_nr <- unlist(lapply(ass_nrp_sids, nrow))
+table(nrp_sid_nr)
+message("NRP siderophore regions found in ", sum(nrp_sid_nr > 0),
+        " genomes out of ", length(assembly_clusters), " (",
+        round(sum(nrp_sid_nr > 0)*100/length(assembly_clusters),1), "%)")
+round(table(nrp_sid_nr)*100/length(assembly_clusters), digits = 1)
+```
+
+## Summarize cluster types present in each strain
+```{r}
+types <- c("HYDROXAMATE", "SALICYLATE", "OHASP", "OHHIS", "PYOVERDINE", "CATECHOL", "GRAMININE", "DMAQ")
+
+## Use chelator type info calculated earlier
+met_info <- read.table("../5_refseq_statistics/complete_representatives.tsv",
+                              sep = "\t", header=T)
+
+assembly_mets <- lapply(assembly_summary$V1, function(x) met_info[met_info$Assembly == x,])
+
+ass_types <- sapply(assembly_mets, function(x) {
+  apply(x[, types], 2, any)
+})
+ass_types <- as.data.frame(t(ass_types))
+```
+
+
+```{r, eval = F}
+ass_count <- data.frame(Assembly = names(assembly_clusters),
+                        NRP.met = nrp_sid_nr,
+                        NRPS = sapply(assembly_clusters, function(x) { nrow(x[x$NRPS == T,])})
+)
+ass_count <- cbind(ass_count, ass_types)
+
+write.table(ass_count, file = "complete_genome_cluster_counts.tsv",
+            sep = "\t", row.names = F, quote = F)
+```
+
+```{r}
+sessionInfo()
+```

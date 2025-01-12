@@ -1,0 +1,33 @@
+---
+title: "R Notebook"
+output: html_document
+---
+Starting with complete representative genomes that have taxonomy data in GTDB, prepare table with taxonomy hierarchy
+
+```{r}
+tree_taxa <- readLines(file("tree_taxa.txt"))
+tree_info <- read.table("bac120_taxonomy.tsv", sep='\t', header=F)
+
+rownames(tree_info) <- substr(tree_info$V1, 8, 16)
+tree_info <- tree_info[tree_taxa, ]
+taxonomy <- strsplit(tree_info$V2, ";", fixed = T)
+taxonomy <- do.call(rbind, taxonomy)
+taxonomy <- sub("[a-z]__", "", taxonomy)
+
+rownames(taxonomy) <- tree_taxa
+
+# Remove subdivisions from gtdb
+taxonomy <- apply(taxonomy, 2, function(x) sub("_\\w", "", x))
+
+# Rename columns
+ranks <- c("K", "P", "C", "O", "F", "G", "S")
+colnames(taxonomy) <- ranks
+```
+
+```{r, eval = F}
+write.table(taxonomy, file = "tree_taxonomy.tsv", sep = "\t", col.names=NA, quote = F)
+```
+
+```{r}
+sessionInfo()
+```

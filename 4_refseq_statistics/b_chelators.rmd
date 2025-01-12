@@ -1,0 +1,121 @@
+---
+title: "R Notebook"
+output: html_document
+---
+
+```{r}
+all_clusters <- read.table("../2_refseq_reps_results/scores_0625.tsv", sep='\t', header=TRUE)
+
+## Start with complete clusters
+nrp_mets <- all_clusters[all_clusters$NRP.metallophore == T & all_clusters$ContigEdge == F,]
+```
+
+```{r}
+BIOSYNTHESIS <- c("VibH_like", "Cy_tandem",
+               "IBH_Asp", "IBH_His", "TBH_Asp",
+               "CyanoBH_Asp1", "CyanoBH_Asp2",
+               "IPL", "SalSyn", "EntA", "EntC",
+               "GrbD", "GrbE",
+               "FbnL", "FbnM",
+               "PvdO", "PvdP",
+               "Orn_monoox", "Lys_monoox", "VbsL")
+NEGATIVES <- c("KtzT", "MetRS.like", "SBH_Asp")
+TRANSPORT <- c("FecCD", "TonB_dep_Rec", "Peripla_BP_2")
+HYDROXAMATE <- c( "Orn_monoox", "Lys_monoox", "VbsL")
+CATECHOL <- c("EntA", "EntC")
+SALICYLATE <- c("IPL", "SalSyn")
+CAT_SAL <- c("VibH_like", "Cy_tandem")
+OHASP <- c("IBH_Asp", "TBH_Asp",
+           "CyanoBH_Asp1", "CyanoBH_Asp2")
+OHHIS <- "IBH_His"
+bOH_AA <- c(OHASP, OHHIS)
+GRAMININE <- c("GrbD", "GrbE")
+PYOVERDINE <- c("PvdO", "PvdP")
+DMAQ <- c("FbnL", "FbnM")
+
+# Only one gene is needed
+TYPES_OR <- list(HYDROXAMATE, SALICYLATE, OHASP, OHHIS, PYOVERDINE)
+names(TYPES_OR) <- c("HYDROXAMATE", "SALICYLATE", "OHASP", "OHHIS", "PYOVERDINE")
+
+# Both genes are needed
+TYPES_AND <- list( CATECHOL, GRAMININE, DMAQ)
+names(TYPES_AND) <- c("CATECHOL", "GRAMININE", "DMAQ")
+```
+
+## Convert gene presence to chelator type
+```{r}
+onehot <- !is.na(nrp_mets[,BIOSYNTHESIS])
+
+## convert to chelator type
+by_type_and <- as.matrix(data.frame(lapply(TYPES_AND, function(x) rowSums(onehot[, x, drop = F]) == length(x))))
+by_type_or <- as.matrix(data.frame(lapply(TYPES_OR, function(x) rowSums(onehot[, x, drop = F])>0)))
+by_type <- cbind(by_type_and, by_type_or)
+rownames(by_type) <- rownames(by_type_or)
+
+## count for each chelator
+type_counts <- sort(colSums(by_type), decreasing = T)
+type_counts
+type_counts_percs <- round(100*type_counts/nrow(onehot),1)
+paste0(type_counts_percs,"%")
+
+## co-occurrence in one cluster
+type_adjacency <- t(by_type) %*% by_type
+type_adjacency[type_adjacency == 0] <- NA
+
+type_adjacency
+
+message("\nNumber of clusters with more than one type:")
+paste(sum(rowSums(by_type) > 1), "out of", nrow(by_type))
+
+message("\nDistribution of chelator numbers:")
+nr <- table(rowSums(by_type))
+nr
+round(100 * nr/sum(nr),1)
+```
+
+```{r}
+library(UpSetR)
+binary <- by_type
+binary[binary == TRUE] <- 1
+binary[binary != TRUE] <- 0
+up <- upset(as.data.frame(binary),
+        sets = names(sort(colSums(binary))),
+        keep.order = T,
+        sets.x.label = "Total Chelator Frequency",
+        mainbar.y.label = "Frequency of Combination",
+        point.size = 5, line.size = 1.5, text.scale = 2)
+up
+
+pdf(file = "upset.pdf", width = 9, height = 7)
+up
+dev.off()
+
+cooccur <- crossprod(as.matrix(up$New_data))
+```
+(Figure was prettified in illustrator)
+
+### OHHis/hydroxamate siderophores are not known besides pyoverdines
+```{r}
+overlaps <- function(table, x,y, hit_nr = 2) {
+  rows <- nrp_mets[which(table[,x] & table[,y] & rowSums(table) == hit_nr),]
+  rows[,colSums(!is.na(rows)) != 0]
+}
+
+print(overlaps(by_type, "HYDROXAMATE", "OHHIS"), quote = F)
+```
+
+
+## Write table for bigscape, etc
+```{r}
+out_table <- cbind(nrp_mets, by_type)
+
+rownames(out_table) <- paste0(out_table$Assembly, "_",
+                              out_table$Accesion, ".",
+                              out_table$Region)
+
+write.table(out_table, "complete_representatives.tsv", sep = "\t")
+```
+
+```{r}
+sessionInfo()
+```

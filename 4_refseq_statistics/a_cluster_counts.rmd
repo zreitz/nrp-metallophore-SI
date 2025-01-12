@@ -1,0 +1,75 @@
+---
+title: "R Notebook"
+output: html_document
+---
+
+### Basic cluster statistics - starting with all detected clusters
+```{r}
+all_clusters <- read.table("../2_refseq_reps_results/scores_0625.tsv", sep='\t', header=TRUE)
+
+message("Total NRP metallophores:")
+sum(all_clusters$NRP.metallophore == T)
+
+table(NRP.met = all_clusters$NRP.metallophore,
+      NRPS = all_clusters$NRPS)
+```
+
+### How do the rules perform on contig edges vs not?
+```{r}
+nrps_clusters <- all_clusters[all_clusters$NRPS == T,]
+cat("Total NRPS BGCs:")
+nrow(nrps_clusters)
+cat("Contig Edge")
+table(nrps_clusters$ContigEdge)
+tab <- table(nrps_clusters[,c("NRP.metallophore", "ContigEdge")])
+tab
+message(paste("\nPERCENT SIDEROPHORE\n  Complete:",
+              round(100*tab[2]/(tab[2]+tab[1]),1),
+              "\n  Contig Edge:",
+              round(100*tab[4]/(tab[4]+tab[3]),1),
+              "\nOverall:",
+              round(100*sum(nrps_clusters$NRP.metallophore == T)/nrow(nrps_clusters), 1)
+))
+```
+
+### Transport
+Having transport is defined as >1 of the three transport pfams as per Crits-Christoph paper
+
+```{r}
+sum(nrps_clusters$TRANSPORT)
+tab <- table(nrps_clusters[,c("TRANSPORT", "ContigEdge")])
+tab
+message(paste("\nPERCENT SIDEROPHORE\n  Complete:",
+              round(100*tab[2]/(tab[2]+tab[1]),1),
+              "\n  Contig Edge:",
+              round(100*tab[4]/(tab[4]+tab[3]),1),
+              "\nOverall:",
+              round(100*sum(nrps_clusters$TRANSPORT == T)/nrow(nrps_clusters), 1)
+))
+```
+
+### Either/or ensemble
+```{r}
+nrps_clusters$Either <- nrps_clusters$TRANSPORT | nrps_clusters$NRP.metallophore
+sum(nrps_clusters$Either)
+tab <- table(nrps_clusters[,c("Either", "ContigEdge")])
+tab
+message(paste("\nPERCENT SIDEROPHORE\n  Complete:",
+              round(100*tab[2]/(tab[2]+tab[1]),1),
+              "\n  Contig Edge:",
+              round(100*tab[4]/(tab[4]+tab[3]),1),
+              "\nOverall:",
+              round(100*sum(nrps_clusters$Either == T)/nrow(nrps_clusters), 1)
+))
+```
+
+Grab counts for the Type II NRPS clusters
+```{r}
+type2 <- all_clusters[all_clusters$NRP.metallophore & !all_clusters$NRPS, ]
+table(type2$ContigEdge)
+```
+
+
+```{r}
+sessionInfo()
+```

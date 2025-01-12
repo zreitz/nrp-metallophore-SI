@@ -1,0 +1,262 @@
+---
+title: "R Notebook"
+output: html_document
+---
+
+## Build a bacdive taxon lookup
+
+```{r}
+cluster_counts <- read.table("complete_genome_cluster_counts.tsv",
+                              sep = "\t", header=T, row.names = 1)
+
+## Bacdive uses genbank GCAs, but the nine digits will match
+rownames(cluster_counts) <- substr(rownames(cluster_counts), 5, 13)
+```
+
+## Get oxygen tolerance for strains from bacdive
+Strains with a genome sequence accession starting with GCA and any oxygen tolerance value were retrieved from Bacdive:
+https://bacdive.dsmz.de/advsearch?fg%5B0%5D%5Bgc%5D=OR&fg%5B0%5D%5Bfl%5D%5B1%5D%5Bfd%5D=Genome+seq.+accession+number&fg%5B0%5D%5Bfl%5D%5B1%5D%5Bfo%5D=beginswith&fg%5B0%5D%5Bfl%5D%5B1%5D%5Bfv%5D=GCA&fg%5B0%5D%5Bfl%5D%5B1%5D%5Bfvd%5D=sequence_genomes-sequence_acc-7&fg%5B0%5D%5Bfl%5D%5B2%5D=AND&fg%5B0%5D%5Bfl%5D%5B3%5D%5Bfd%5D=Oxygen+tolerance&fg%5B0%5D%5Bfl%5D%5B3%5D%5Bfv%5D=*&fg%5B0%5D%5Bfl%5D%5B3%5D%5Bfvd%5D=oxygen_tolerance-oxygen_tol-4
+
+```{r}
+bacdive <- read.csv("advsearch_bacdive_oxygen.csv", sep=',', header=T)
+
+library(zoo)
+bacdive$ID <- as.character(zoo::na.locf(bacdive$ID))
+
+bac_assemblies <- bacdive[startsWith(bacdive$Genome.seq..accession.number, "GCA"),
+                      c("ID", "Genome.seq..accession.number")]
+bac_assemblies$Nines <- substr(bac_assemblies$Genome.seq..accession.number, 5, 13)
+bac_oxygens <- bacdive[bacdive$Oxygen.tolerance != "", c("ID", "Oxygen.tolerance")]
+
+# Simplify values
+simplify_oxy <- function(x) {
+  if (x %in% c('obligate aerobe', 'aerobe')) return("AER")
+  if (x %in% c('facultative anaerobe', 'facultative aerobe', 'aerotolerant',
+               'microaerophile', "microaerotolerant")) return("OTHER")
+  if (x %in% c('anaerobe', 'obligate anaerobe')) return("ANA")
+}
+
+bac_oxygens$Oxygen.tolerance <- unlist(lapply(bac_oxygens$Oxygen.tolerance, simplify_oxy))
+```
+
+Combine strains spanning multiple rows
+```{r}
+bac_ids <- unique(bac_oxygens$ID)
+
+bac_oxy_combined <- unlist(lapply(bac_ids, function(strain) {
+  paste(unique(bac_oxygens$Oxygen.tolerance[bac_oxygens$ID == strain]), collapse = ",")
+}))
+names(bac_oxy_combined) <- bac_ids
+```
+
+Summarize tags into a single value (ex: aerobe + anaerobe -> other)
+```{r}
+summarize_oxy <- function(strain) {
+  classes <- c("AER", "OTHER", "ANA")
+
+  class_bool <- unlist(lapply(classes, grepl, strain))
+
+  # No hits
+  if (sum(class_bool) == 0) return(NA)
+  # Unambiguous
+  if (sum(class_bool) == 1) return(classes[class_bool])
+  # Stuff with other is always other
+  if (class_bool[2]) return("OTHER")
+  # Aer/anaer is also other
+  if (class_bool[1] && class_bool[3]) return("OTHER")
+
+  return("ERROR")
+}
+
+bac_oxy_summary <- sapply(bac_oxy_combined, summarize_oxy)
+```
+
+## Match bacdive strains to complete representative genomes
+```{r}
+rep_bac_ids <- bac_assemblies[match(rownames(cluster_counts), bac_assemblies$Nines),"ID"]
+names(rep_bac_ids) <- rownames(cluster_counts)
+rep_bac_ids <- rep_bac_ids[!is.na(rep_bac_ids)]
+
+rep_oxygen <- bac_oxy_summary[rep_bac_ids]
+names(rep_oxygen) <- names(rep_bac_ids)
+rep_oxygen <- rep_oxygen[!is.na(rep_oxygen)]
+```
+
+
+## Quantifying the correlation between oxygen tolerance and NRP metallophores
+```{r}
+oxy_df <- data.frame(Nine = names(rep_oxygen),
+                     Oxy = factor(rep_oxygen, levels = c("AER", "OTHER", "ANA")),
+                     hasNRPS = cluster_counts[names(rep_oxygen), "NRPS"] > 0,
+                     hasNRPSmet = cluster_counts[names(rep_oxygen), "NRP.met"] > 0
+)
+
+df_table <- as.data.frame.matrix(table(oxy_df[,c("Oxy", "hasNRPSmet")]))
+df_table$Frac <- df_table$`TRUE` / rowSums(df_table)
+
+df_table
+```
+
+```{r}
+library(ggplot2)
+
+plt <- ggplot(oxy_df) +
+  aes(x = Oxy, fill = hasNRPSmet) +
+  geom_bar(position = "fill") +
+  coord_flip() +
+  theme_classic(base_size = 20) +
+  scale_x_discrete(limits = rev) +
+  theme(
+        legend.position = c(.8, .3),
+        legend.spacing.x = unit(0, 'cm'),
+        legend.key.size = unit(1, "cm"))
+
+plt
+pdf("figs/NRPmets-v-oxygen.pdf")
+plt
+dev.off()
+```
+
+
+
+## What anaerobes have NRP metallophores?
+```{r}
+ana_sids <- rownames(oxy_df)[oxy_df$Oxy == "ANA" & oxy_df$hasNRPSmet == T]
+
+clusters <- read.table("../5_refseq_statistics/complete_representatives.tsv", sep='\t', header=TRUE)
+
+ana_sid_clusters <- clusters[grepl(paste(ana_sids, collapse = "|"),
+                                   clusters$Assembly), ]
+```
+
+
+### NRPS confounder?
+```{r}
+plt <- ggplot(oxy_df) +
+  aes(x = Oxy, fill = hasNRPS) +
+  geom_bar(position = "fill") +
+  coord_flip() +
+  theme_classic(base_size = 20) +
+  scale_x_discrete(limits = rev, labels = c("Anaerobe", "Other*", "Aerobe")) +
+  labs(x = "Oxygen tolerance (BacDive)", y = "Fraction of genomes") +
+  theme(
+        legend.position = "bottom",
+        legend.key.size = unit(1, "cm"))
+
+plt
+pdf("figs/NRPS-v-oxygen.pdf")
+plt
+dev.off()
+```
+
+
+### Stats
+```{r}
+library(fmsb)
+
+NRPsid <- as.matrix(table(oxy_df[,c("Oxy", "hasNRPSmet")]))
+pairwise.fisher.test(NRPsid)
+
+NRPS <- as.matrix(table(oxy_df[,c("Oxy", "hasNRPS")]))
+pairwise.fisher.test(NRPS)
+```
+
+## Percent with nrp sids among strains with nrps
+```{r}
+has_nrps <- oxy_df[oxy_df$hasNRPS == T, ]
+
+df_table <- as.data.frame.matrix(table(has_nrps[,c("Oxy", "hasNRPSmet")]))
+df_table$Frac <- df_table$`TRUE` / rowSums(df_table)
+
+df_table
+
+plt <- ggplot(has_nrps) +
+  aes(x = Oxy, fill = hasNRPSmet) +
+  geom_bar(position = "fill") +
+  coord_flip() +
+  theme_classic(base_size = 20) +
+  scale_x_discrete(limits = rev, labels = c("Anaerobe", "Other*", "Aerobe")) +
+  labs(x = "Oxygen tolerance (BacDive)", y = "Fraction of genomes") +
+  theme(
+        legend.position = "bottom",
+        legend.key.size = unit(1, "cm"))
+
+plt
+pdf("figs/NRPmets-w-NRPS-v-oxygen.pdf")
+plt
+dev.off()
+```
+
+```{r}
+NRPsid <- as.matrix(table(has_nrps[,c("Oxy", "hasNRPSmet")]))
+pairwise.fisher.test(NRPsid)
+```
+
+## Check for bias in taxonomy?
+
+```{r}
+## All genomes
+assembly_summary <- read.csv("../2_refseq_reps_results/assembly_summary.txt", sep = "\t", header = F)
+rownames(assembly_summary) <- substr(assembly_summary$V1, 5, 13)
+
+oxy_df$species <- sub("(\\w+\\s+\\w+).*", "\\1", assembly_summary[rownames(oxy_df), "V8"])
+oxy_df$genus <- sub("(\\w+).*", "\\1", assembly_summary[rownames(oxy_df), "V8"])
+
+one_per_genus <- oxy_df[!duplicated(oxy_df$genus), ]
+
+df_table <- as.data.frame.matrix(table(one_per_genus[,c("Oxy", "hasNRPSmet")]))
+df_table$Frac <- df_table$`TRUE` / rowSums(df_table)
+
+df_table
+
+NRPsid <- as.matrix(table(one_per_genus[,c("Oxy", "hasNRPSmet")]))
+pairwise.fisher.test(NRPsid)
+
+plt <- ggplot(one_per_genus) +
+  aes(x = Oxy, fill = hasNRPSmet) +
+  geom_bar(position = "fill") +
+  coord_flip() +
+  theme_classic(base_size = 20) +
+  scale_x_discrete(limits = rev, labels = c("Anaerobe", "Other*", "Aerobe")) +
+  labs(x = "Oxygen tolerance (BacDive)", y = "Fraction of genomes") +
+  theme(
+        legend.position = "bottom",
+        legend.key.size = unit(1, "cm"))
+
+plt
+pdf("figs/NRPmets-per-genus-v-oxygen.pdf")
+plt
+dev.off()
+```
+
+```{r}
+genus_has_nrps <- one_per_genus[one_per_genus$hasNRPS == T,]
+
+df_table <- as.data.frame.matrix(table(genus_has_nrps[,c("Oxy", "hasNRPSmet")]))
+df_table$Frac <- df_table$`TRUE` / rowSums(df_table)
+
+df_table
+
+NRPsid <- as.matrix(table(genus_has_nrps[,c("Oxy", "hasNRPSmet")]))
+pairwise.fisher.test(NRPsid)
+
+plt <- ggplot(genus_has_nrps) +
+  aes(x = Oxy, fill = hasNRPSmet) +
+  geom_bar(position = "fill") +
+  coord_flip() +
+  theme_classic(base_size = 20) +
+  scale_x_discrete(limits = rev, labels = c("Anaerobe", "Other*", "Aerobe")) +
+  labs(x = "Oxygen tolerance (BacDive)", y = "Fraction of genomes") +
+  theme(
+        legend.position = "bottom",
+        legend.key.size = unit(1, "cm"))
+
+plt
+pdf("figs/NRPmets-per-genus-w-NRPS-v-oxygen.pdf")
+plt
+dev.off()
+```
+
+```{r}
+sessionInfo()
+```

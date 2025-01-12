@@ -1,0 +1,77 @@
+---
+title: "R Notebook"
+output: html_document
+---
+
+Ran bigscape on 2523 complete NRP metallophore clusters (see `5_refseq_statistics/cluster_counts.rmd`) plus 77 reference BGCs (then + alterobactin)
+```{bash, eval = F}
+/home/reitz001/lustre/software/BiG-SCAPE/bigscape.py -i complete_nrp_sids_Jun26/ -o bigscape_complete_nrp_sids_Jun26 -c 95 --no_classify --mix --cutoffs 0.3 0.4 0.5 --clans-off -v
+
+## I forgot to add alterobactin:
+bigscape -i complete_nrp_sids_Jun26/ -o bigscape_add_alterobactin -c 95 --no_classify --mix --cutoffs 0.3 0.4 0.5 --clans-off --query_bgc ../ref_sids/ref_alterobactin_AQHB01000035.1.region001.gbk
+```
+
+
+## Network statistics
+
+Starting with `Network_Annotations_Full.tsv` that came from the add_alterobactin run
+
+```{r}
+network_table <- read.csv("Network_Annotations_Full.tsv", sep = "\t", header = T)
+cluster_stats <- read.table("../5_refseq_statistics/complete_representatives.tsv",
+                            sep = "\t", header = T)
+
+# Remove reference clusters
+network_table <- network_table[!startsWith(network_table$BGC, "ref_") & !startsWith(network_table$BGC, "BGC"), ]
+
+# Make lookup column
+network_table$Lookup <- sub("(?<=GCF.{12}).*genomic", "", network_table$BGC, perl = T)
+rownames(cluster_stats) <- paste0(cluster_stats$Assembly, "_",
+                                  cluster_stats$Accesion, ".",
+                                  cluster_stats$Region)
+```
+```{r}
+library(igraph)
+```
+
+
+```{r}
+# Edge list exported from cytoscape
+edgelist <- read.csv("cytoscape_edge_export.csv", sep = ",", header = T)
+edgelist <- strsplit(edgelist$name, " (interacts with) ", fixed = T)
+edgelist <- do.call(rbind, edgelist)
+grph <- graph_from_data_frame(edgelist, directed = F)
+
+# Get singletons missing from edgelist
+all_nodes <- read.csv("cytoscape_node_export.csv", sep = ",", header = T)
+all_nodes <- all_nodes$shared.name
+all_nodes <- all_nodes[!startsWith(all_nodes,"ref_")]
+singletons <- all_nodes[!all_nodes %in% as_ids(V(grph))]
+message("Number of singletons:")
+length(singletons)
+
+## Split into GCFs
+components <- decompose(grph)
+comp_nodes <- lapply(components, function(g) as_ids(V(g)))
+comp_has_ref <- sapply(comp_nodes, function(x) any(startsWith(x, "ref")))
+message("Number of components with refs:")
+sum(comp_has_ref)
+
+node_has_ref <- unlist(comp_nodes[comp_has_ref])
+node_has_ref <- node_has_ref[!startsWith(node_has_ref, "ref_")]
+
+message("Clusters in a GCF with a reference BGC:")
+length(node_has_ref)
+length(node_has_ref) / length(all_nodes)
+
+message("Number of GCFs with no ref:")
+sum(!comp_has_ref) + length(singletons)
+(sum(!comp_has_ref) + length(singletons)) / (length(comp_nodes) + length(singletons))
+
+message("Number of BGCs with no ref:")
+length(unlist(comp_nodes[!comp_has_ref])) + length(singletons)
+```
+
+```{r}
+sessionInfo()
+```

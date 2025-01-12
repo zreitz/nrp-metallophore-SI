@@ -1,0 +1,129 @@
+---
+title: "Associate bigscape with the tree"
+output: html_document
+---
+
+
+```{r}
+library(igraph)
+```
+```{r}
+edgelist <- read.csv("../6_bigscape/cytoscape_edge_export.csv", sep = ",", header = T)
+edgelist <- strsplit(edgelist$name, " (interacts with) ", fixed = T)
+edgelist <- do.call(rbind, edgelist)
+grph <- graph_from_data_frame(edgelist, directed = F)
+
+components <- decompose(grph)
+comp_nodes <- lapply(components, function(g) as_ids(V(g)))
+has_ref <- unlist(comp_nodes[unlist(lapply(comp_nodes, function(x) any(startsWith(x, "ref"))))])
+has_ref <- has_ref[!startsWith(has_ref, "ref_")]
+
+gcf_nines <- substr(has_ref, 5, 13)
+nines_table <- as.data.frame(table(gcf_nines))
+```
+
+```{r}
+strain_df <- read.table("taxonomy_and_metallophores.tsv", sep='\t', header=TRUE)
+rownames(strain_df) <- substr(strain_df$Assembly, 5, 13)
+
+itol_df <- strain_df[, "NRP.met", drop = F]
+itol_df$HasRef <- nines_table[match(rownames(itol_df), nines_table$gcf_nines), "Freq"]
+itol_df$HasRef[is.na(itol_df$HasRef)] <- 0
+itol_df$NoRef <- itol_df$NRP.met - itol_df$HasRef
+```
+
+```{r}
+write.table(itol_df, file = "has_ref.tsv", sep = "\t", col.names = NA, quote = F)
+```
+
+## How many GCFs per taxon
+```{r}
+# Get singletons missing from edgelist
+all_nodes <- read.csv("../6_bigscape/cytoscape_node_export.csv", sep = ",", header = T)
+all_nodes <- all_nodes$shared.name
+all_nodes <- all_nodes[!startsWith(all_nodes,"ref_")]
+singletons <- all_nodes[!all_nodes %in% as_ids(V(grph))]
+length(singletons)
+```
+
+```{r}
+# Find which strains are in each component (GCF)
+comp_nodes_all <- c(comp_nodes, as.list(singletons))
+comp_has_reps <- sapply(comp_nodes_all, function(x) any(startsWith(x, "ref_")))
+comp_nodes_all <- lapply(comp_nodes_all, function(x) x[!startsWith(x, "ref_")])
+comp_nines <- lapply(comp_nodes_all, substr, 5, 13)
+
+# Find which components are in each strain
+strain_comps <- sapply(rownames(strain_df), function(strain) which(sapply(comp_nines, function(x) any(x == strain))))
+```
+
+```{r}
+## Link components to taxonomy
+ranks <- c("P", "C", "O", "F", "G")
+tax_df <- strain_df[ranks]
+
+tax_df$comps <- strain_comps
+
+rank_dfs <- lapply(1:5, function(i) {
+  rank <- ranks[i]
+  rank_comps <- lapply(unique(tax_df[,rank]), function(x) unlist(tax_df$comps[tax_df[,rank] == x]))
+  rank_cl_nr <- lengths(rank_comps)
+  rank_cl_nr_repped <- sapply(rank_comps, function(x) sum(comp_has_reps[x]))
+  rank_fraction_repped <- 1 - (rank_cl_nr_repped / rank_cl_nr)
+  rank_comps <- lapply(rank_comps, unique)
+  rank_df <- data.frame(Taxon = unique(tax_df[,rank]),
+                        ClusterNr = rank_cl_nr,
+                        CluWithRefs = rank_cl_nr_repped,
+                        CluNovelFrac = rank_fraction_repped,
+
+                        TotalComps = lengths(rank_comps),
+                        ClPerComp = rank_cl_nr / lengths(rank_comps),
+                        CompsWithRefs = sapply(rank_comps, function(x) sum(comp_has_reps[x])),
+                        CompsWithout = sapply(rank_comps, function(x) sum(!comp_has_reps[x]))
+                         )
+  rank_df$FractionNovel <- rank_df$CompsWithout / rank_df$TotalComps
+  rank_df <- rank_df[rank_df$TotalComps > 0,]
+  rank_df <- rank_df[order(rank_df$FractionNovel, decreasing = T),]
+  rank_tax <- tax_df[match(rank_df$Taxon, tax_df[,rank]), 1:i]
+  cbind(rank_df, rank_tax)
+})
+
+names(rank_dfs) <- ranks
+```
+
+Are cyanobacterial BGCs significantly novel?
+```{r}
+phyla <- rank_dfs$P
+
+# Build fisher exact matrices for each
+for (phy in phyla$Taxon) {
+  mat <- matrix(nrow = 2, ncol = 2)
+  mat[2] <- phyla[phyla$Taxon == phy, "CluWithRefs"]
+  mat[1] <- phyla[phyla$Taxon == phy, "ClusterNr"] - mat[2]
+  mat[4] <- sum(phyla[phyla$Taxon != phy, "CluWithRefs"])
+  mat[3] <- sum(phyla[phyla$Taxon != phy, "ClusterNr"]) - mat[4]
+  print(phy)
+  print(p.adjust(fisher.test(mat)$p, "bon", nrow(phyla)))
+}
+```
+
+Are the Polyangia NRP metallophores really all novel?
+```{r}
+tax_df$comps <- sapply(tax_df$comps, paste, collapse = " ")
+
+met_info <- read.table("../5_refseq_statistics/complete_representatives.tsv",
+                       sep = "\t", header=T)
+
+
+nines_poly <- rownames(tax_df)[tax_df$C == "Polyangia" & tax_df$comps != ""]
+clusters_poly <- met_info[substr(met_info$Assembly, 5, 13) %in% nines_poly,]
+
+nines_myx <- rownames(tax_df)[tax_df$C == "Myxococcia" & tax_df$comps != ""]
+clusters_myx <- met_info[substr(met_info$Assembly, 5, 13) %in% nines_myx,]
+
+```
+
+
+```{r}
+sessionInfo()
+```

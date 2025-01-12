@@ -1,0 +1,129 @@
+---
+title: "R Notebook"
+output: html_document
+---
+
+### Associate taxonomy with the metallophores
+```{r}
+taxonomy <- read.table("../3_gtdb_taxonomy/tree_taxonomy.tsv",
+                       sep='\t', header=TRUE, colClasses = "character")
+
+strain_df <- read.table("../7_by_strain/complete_genome_cluster_counts.tsv",
+                        sep='\t', header=TRUE)
+rownames(strain_df) <- substr(strain_df$Assembly, 5, 13)
+
+strain_df <- strain_df[taxonomy$X, ]
+
+write.table(cbind(strain_df, taxonomy[, 2:7]),
+            "taxonomy_and_metallophores.tsv",
+            sep = "\t", quote = F, row.names = F)
+```
+
+
+### Is NRP metallophore biosynthesis unevenly distributed across bacterial taxa?
+```{r}
+taxonomy$HasNRP.met <- strain_df$NRP.met > 0
+taxonomy$HasNRPS <- strain_df$NRPS > 0
+
+phylum_met <- table(taxonomy[,c("P", "HasNRP.met")])
+
+chisq.test(phylum_met)
+```
+
+Chi square shouldn't be used for small expected values (rule of thumb is <5). Combining the small phyla:
+```{r}
+# Overall proportion is 15%, min of 33.3 samples gives >5 expected
+phylum_met_cont <- as.data.frame.matrix(phylum_met)
+big_enough <- phylum_met_cont[rowSums(phylum_met_cont) > 33.3,]
+
+other <- colSums(phylum_met_cont[rowSums(phylum_met_cont) < 33.3,])
+w_other <- rbind(big_enough, other)
+
+chisq.test(w_other)
+
+library(ggplot2)
+df <- data.frame(phylum_met)
+bigs <- as.character(df$P)
+bigs[! bigs %in% rownames(big_enough)] <- "other"
+
+df$P <- as.factor(bigs)
+ggplot(df, aes(x = P, y = Freq, fill = HasNRP.met)) +
+  geom_bar(position="fill", stat="identity") +
+  coord_flip()
+```
+
+## Looking at Proteobacteria and Actinobacteria
+```{r}
+actinos <- taxonomy[taxonomy$P == "Actinobacteriota", ]
+
+orders <- as.data.frame(table(actinos$O))
+orders$HasNRP.met <- sapply(orders$Var1, function(taxon) nrow(actinos[actinos$O == taxon & actinos$HasNRP.met,]))
+orders$NoNRP.met <- orders$Freq - orders$HasNRP.met
+orders$Fraction <- orders$HasNRP.met/orders$Freq
+orders[order(orders$Fraction, decreasing = T),]
+
+freq <- orders[, c("HasNRP.met","NoNRP.met")]
+rownames(freq) <- orders$Var1
+
+## Combine small taxa to reach expected value >5
+min_freq <- 5/(sum(freq$HasNRP.met/sum(freq)))
+small <- rowSums(freq) <= min_freq
+freq <- rbind(freq[!small, ], colSums(freq[small,]))
+
+freq
+chisq.test(freq)
+
+big_orders <- actinos[actinos$O %in% c("Mycobacteriales", "Streptomycetales", "Actinomycetales"), ]
+
+pairwise.t.test(big_orders$HasNRP.met, big_orders$O)
+```
+
+```{r}
+proteos <- taxonomy[taxonomy$P == "Proteobacteria", ]
+
+orders <- as.data.frame(table(proteos$O))
+orders$HasNRP.met <- sapply(orders$Var1, function(taxon) nrow(proteos[proteos$O == taxon & proteos$HasNRP.met,]))
+orders$NoNRP.met <- orders$Freq - orders$HasNRP.met
+orders$Fraction <- orders$HasNRP.met/orders$Freq
+orders[order(orders$Fraction, decreasing = T),]
+
+freq <- orders[, c("HasNRP.met","NoNRP.met")]
+rownames(freq) <- orders$Var1
+
+## Combine small taxa to reach expected value >5
+min_freq <- 5/(sum(freq$HasNRP.met/sum(freq)))
+small <- rowSums(freq) <= min_freq
+freq <- rbind(freq[!small, ], colSums(freq[small,]))
+
+freq
+chisq.test(freq)
+```
+
+
+## NRP.mets and other NRPSs
+```{r}
+strains_with_nrps <- taxonomy[strain_df$NRPS > 0, ]
+
+message("Overall fraction")
+(frac <- sum(strains_with_nrps$HasNRP.met) / nrow(strains_with_nrps))
+min_size <- 5 / frac
+
+phy <- strains_with_nrps[,c("P", "HasNRP.met")]
+too_small <- names(table(strains_with_nrps$P))[table(strains_with_nrps$P) < min_size]
+phy$P[phy$P %in% too_small] <- "Other"
+
+chisq.test(table(phy))
+
+tab <- as.data.frame.matrix(table(phy))
+tab$fraction <- tab$"TRUE" / (rowSums(tab))
+
+tab$pvalue <- sapply(rownames(tab), function(phylum) {
+  fisher.test(phy$P == phylum, phy$HasNRP.met)$p.value * length(unique(phy$P))
+})
+print(data.frame(rownames(tab), tab$fraction, tab$pvalue))
+```
+
+
+```{r}
+sessionInfo()
+```

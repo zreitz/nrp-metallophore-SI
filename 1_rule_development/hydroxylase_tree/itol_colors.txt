@@ -1,0 +1,7 @@
+TREE_COLORS
+SEPARATOR TAB
+DATA
+'WP_015178654.1_439.4i/381.6t/351.2h_trans-1_Cyano_1921'	range	#cfe2f3	CyanoBH_Asp1
+'WP_096646450.1_435.2i/360t/329.8h_trans-2_Cyano_1907'	range	#cfe2f3	CyanoBH_Asp1
+'WP_073600773.1_434.5i/361.1t/332.9h_trans-3_Cyano_1245'	range	#cfe2f3	CyanoBH_Asp1
+'WP_170031866.1_310.1i/t/h_trans-0__329'	branch	#000000	normal	1

@@ -1,0 +1,79 @@
+---
+title: "Take a taxonomically-aware subset of NRPS clusters for manual testing"
+output: html_document
+---
+
+```{r}
+taxonomy <- read.table("../3_gtdb_taxonomy/tree_taxonomy.tsv",
+                        sep='\t', header=T, row.names = 1, colClasses = "character")
+```
+
+Only using strains that have at least one NRPS. I've already scanned for NRP metallophores but that info won't be considered during the manual curation.
+```{r}
+# Get cluster table, which includes all NRPSs found in the representative genomes
+all_clusters <- read.table("../2_refseq_reps_results/scores_0625.tsv", sep='\t', header=TRUE)
+
+# Split by strain
+per_strain <- split(all_clusters, all_clusters$Assembly)
+names(per_strain) <- substr(names(per_strain), 5, 13)
+
+# Only use strains in GTDB
+per_strain <- per_strain[rownames(taxonomy)]
+
+# Only use strains with 1+ NRPS
+has_nrps <- sapply(per_strain, function(x) sum(x$NRPS == "TRUE") > 0)
+```
+
+Dereplicate to one strain per genus
+```{r}
+has_nrps_taxonomy <- taxonomy[has_nrps, ]
+
+per_genus <- split(has_nrps_taxonomy, has_nrps_taxonomy$G)
+
+test_set <- sapply(per_genus, function(x) {
+  rownames(x[sample(nrow(x), 1),])
+})
+
+test_set <- paste0("GCF_", test_set)
+```
+
+```{r, eval = F}
+fileConn<-file("manual_test_set.txt")
+writeLines(test_set, fileConn)
+close(fileConn)
+```
+
+Preparation for scanning with vanilla antiSMASH
+```{bash, eval = F}
+## Extract all NRPS clusters from the directory of antiSMASH results
+for file in */*region*.gbk; do
+  if [[ $(basename $file) == *genomic* ]];
+    then continue;
+  fi;
+  grep -l "product=\"NRPS\"" $file >> nrp_regions.txt;
+done
+
+for f in $(cat nrp_regions.txt); do
+  g=${f//\//_};
+  cp $f ../all_nrps_Jun25/$g;
+done
+
+## Extract ones from the test set taxa
+for f in $(cat nrps_test_set.txt); do
+  find ../all_nrps_Jun25 -name "$f*" -exec cp "{}" nrps_Jun25 \;;
+done
+
+## Rename headers
+for f in *.gbk; do
+  sed -i "1s/.*/LOCUS       $f/" $f;
+done
+```
+
+Genbanks were chunked and run with vanilla antiSMASH 6.1.1.
+Results and genbanks are available in `manual_testing_clusters.tar.gz`
+
+From here, see Table S2
+
+```{r}
+sessionInfo()
+```

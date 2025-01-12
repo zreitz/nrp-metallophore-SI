@@ -1,0 +1,3 @@
+FecCD	FecCD transport family	26	FecCD.hmm
+TonB_dep_Rec	TonB dependent receptor	27	TonB_dep_Rec.hmm
+Peripla_BP_2	Periplasmic binding protein	27	Peripla_BP_2.hmm
